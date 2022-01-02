@@ -1,0 +1,299 @@
+---
+title: 'Assignment #2 Appendix'
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+# Load libraries
+library(survival)
+library(dplyr)
+library(ggplot2)
+library(coxme)
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+# Load Data
+diabetic = read.csv("diabeticVision.csv", stringsAsFactors = TRUE)
+diabetic = diabetic[, -1]
+```
+
+```{r}
+library(tidykids)
+```
+
+
+# 1. Exploratory Data Analysis
+
+Experiment: 
+
+* Treatment #1: Argon laser treatment in either the left or right eye
+* Treatment #2: Xenon laser treatment in either the left or right eye
+* Control: No laser treatment in the eye that did NOT receive the treatment.
+* Outcome: A drop in visual acuity in each eye below 5/200 for two visits in a row
+
+Research Question:
+
+1. Determine the efficacy of treatment type on visual acuity and quantify the improvement between eyes by treatment type
+do a good job at slowing down deterioration in eye sight. There was no difference in the performance of the two treatment groups - both did equally a good job.
+2. Understand the potential impact that age at diagnosis and clinical risk of diabetic retinopathy have on visual acuity.
+
+### Variables
+
+Variable Name | Description
+------------- | -------------
+`id`          | Subject ID
+`laser`       | Type of treatment that was used, either xenon or argon
+`eye`         | left or right eye which received treatment for each participant
+`age`         | age in years at time of diabetes diagnosis
+`type`        | adult or juvenile at time of diabetes diagnosis
+`trt`         | 0 for control eye, 1 for treated eye
+`futime`      | lag-corrected time to loss of vision or last follow-up in months
+`status`      | 0 for lost to follow-up, 1 for loss of vision in eye
+`risk`        | clinical risk of lost of acuity.  Must be at least 6 in one eye to participate in study.
+
+## Data Cleaning
+
+```{r, echo = FALSE}
+# Variable for both treatment types and control
+diabetic$trt.full = ifelse(diabetic$trt == 1, "Treatment", "Control")
+diabetic[diabetic$trt.full == "Treatment", ]$trt.full = ifelse(diabetic[diabetic$trt.full == "Treatment", ]$laser == "xenon", "Xenon", "Argon")
+
+# Variable for eye (not just treatment eye)
+diabetic$eye.full = diabetic$eye
+diabetic[diabetic$trt == 1, ]$eye.full = diabetic[diabetic$trt == 1, ]$eye
+diabetic[diabetic$trt == 0, ]$eye.full = ifelse(diabetic[diabetic$trt == 0, ]$eye.full == "left", "right", "left")
+
+# Variable for eye (by treatment eye)
+diabetic$eye.type = paste(diabetic$eye.full, diabetic$trt)
+diabetic$eye.type = as.factor(diabetic$eye.type)
+levels(diabetic$eye.type) = c("Left Control", "Left Treatment", "Right Control", "Right Treatment")
+
+# Variable for eye (by treatment eye 2)
+diabetic$eye.type.full = paste(diabetic$eye.full, diabetic$trt.full)
+diabetic$eye.type.full = as.factor(diabetic$eye.type.full)
+levels(diabetic$eye.type.full) = c("Left Argon", "Left Control", "Left Xenon", "Right Argon", "Right Control", "Right Xenon")
+
+# Age of diabetic prognosis group
+diabetic$age.group = diabetic$age
+diabetic$age.group[between(diabetic$age, 1, 10) ] = "Age 1 - 10"
+diabetic$age.group[between(diabetic$age, 11, 19) ] = "Age 11 - 19"
+diabetic$age.group[between(diabetic$age, 20, 29) ] = "Age 20 - 29"
+diabetic$age.group[between(diabetic$age, 30, 58) ] = "Age 30 - 58"
+
+# Make factor variables
+diabetic$trt = as.factor(diabetic$trt)
+diabetic$trt.full = as.factor(diabetic$trt.full)
+diabetic$age.group = as.factor(diabetic$age.group)
+```
+
+### Summary of data (at the eye level)
+
+
+```{r, echo = FALSE}
+summary(diabetic)
+```
+
+### Make Version of Data from long to wide
+
+```{r, echo=FALSE}
+diab.wide = reshape(diabetic, 
+                    idvar = c("id", "laser", "eye", "age", "type", "age.group"), 
+                    timevar = "trt", 
+                    direction = "wide")
+
+# List of categorical and numerical variables:
+cat_vars <- c("laser", "eye", "type", "status.0", "status.1")
+num_vars <- c("age", "futime.0", "futime.1", "risk.0", "risk.1")
+
+head(diab.wide, n = 3)
+```
+
+## Summary of Data (at the patient level)
+
+```{r, echo = FALSE}
+summary(diab.wide)
+```
+
+# 2. Data Analysis 
+
+### Create the survival object 
+
+```{r}
+# Create survival object
+survobj <- with(diabetic, Surv(futime, status))
+```
+
+## The Kaplan-Meier Survival Curve
+
+```{r, out.height = "55%", out.width="55%", echo=FALSE}
+# Survival Function Plots
+
+# Overall
+plot(survfit(survobj ~ 1, data=diabetic), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution Overall")
+
+# Treatment Types
+plot(survfit(survobj ~ trt.full, data=diabetic), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution (by Treatment Type)",
+     col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'))
+legend('bottomleft', legend=levels(as.factor(diabetic$trt.full)), col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'), lty=1)
+
+# Diabetes Diagnosis
+plot(survfit(survobj ~ type, data=diabetic), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution (by diabetes diagnosis)", 
+     col = c('red', 'blue'))
+legend('bottomleft', legend=levels(as.factor(diabetic$type)), col = c('red', 'blue'), lty=1)
+
+# Risk
+plot(survfit(survobj ~ risk, data=diabetic), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution (by risk score)", 
+     col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'))
+legend('bottomleft', legend=levels(as.factor(diabetic$risk)), col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'), lty=1)
+```
+
+
+```{r, out.height = "55%", out.width="55%", echo=FALSE}
+diabetic$trt.name = diabetic$trt
+levels(diabetic$trt.name) = c("Control", "Treatment")
+
+# Treatment Types
+plot(survfit(survobj ~ trt, data=diabetic), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution (by Treatment Type)",
+     col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'))
+legend('bottomleft', legend=levels(as.factor(diabetic$trt.name)), col = c('red', 'blue', 'green', 'purple'), lty=1)
+
+# By Eye
+plot(survfit(Surv(futime, status) ~ eye.type, data=diabetic), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution (by Eye and Treatment Type)",
+     col = c('red', 'blue', 'green', 'purple'))
+legend('bottomleft', legend=levels(as.factor(diabetic$eye.type)), col = c('red', 'blue', 'green', 'purple'), lty=1)
+
+# By Eye
+plot(survfit(Surv(futime, status) ~ eye.type.full, data=diabetic), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution (by Eye and Treatment Type)",
+     col = c('red', 'blue', 'green', 'purple', "yellow", "orange"))
+legend('bottomleft', legend=levels(as.factor(diabetic$eye.type.full)), col = c('red', 'blue', 'green', 'purple', "yellow", "orange"), lty=1)
+```
+
+
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+# By Age
+plot(survfit(survobj~age, data=diabetic), xlab="Time at loss of vision", 
+   ylab="% not lost sight", yscale=100,
+   main ="Survival Distribution (by Age)", 
+   col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'))
+legend('bottomleft', legend=levels(as.factor(diabetic$age)), col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'), lty=1)
+
+# By Age Group
+plot(survfit(survobj~age.group, data=diabetic), xlab="Time at loss of vision", 
+   ylab="% not lost sight", yscale=100,
+   main ="Survival Distribution (by Age Group)", 
+   col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'))
+legend('bottomleft', legend=levels(as.factor(diabetic$age.group)), col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'), lty=1)
+
+# By Eye
+plot(survfit(Surv(futime, status) ~ eye.full, data=diabetic[diabetic$trt == 1, ]), 
+     xlab="Time at loss of vision in eye (in Months)", 
+     ylab="% who has not lost sight", yscale=100,
+     main ="Survival Distribution (by Eye among Treatment group)",
+     col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'))
+legend('bottomleft', legend=levels(as.factor(diabetic[diabetic$trt == 1, ]$eye.full)), col = c('red', 'blue', 'orange', 'yellow', 'green', 'purple'), lty=1)
+```
+
+## Log-Rank Tests
+
+### Testing for differences in treatment groups
+
+```{r, echo = FALSE}
+# Differences among treatment types and control
+survdiff(survobj ~ trt, data=diabetic)
+survdiff(survobj ~ trt.full, data=diabetic)
+```
+
+### Testing for differences only among the treatment types
+
+```{r, echo = FALSE}
+# Differences only across the treatment types
+diabetic.sub = diabetic[diabetic$trt== 1, ]
+survdiff(Surv(futime, status) ~ trt.full, data=diabetic.sub)
+```
+
+### Testing for differences among the age of diagnosis
+
+```{r, echo = FALSE}
+survdiff(survobj ~ type, data=diabetic)
+survdiff(survobj ~ age, data=diabetic)
+```
+
+### Testing for differences among risk score
+
+```{r, echo = FALSE}
+survdiff(survobj ~ risk, data=diabetic)
+```
+
+### Testing for differences among the treated eye (left and right)
+
+```{r, echo = FALSE}
+survdiff(Surv(futime, status) ~ eye, data=diabetic)
+survdiff(Surv(futime, status) ~ eye.full, data=diabetic)
+survdiff(Surv(futime, status) ~ eye.type, data=diabetic)
+survdiff(Surv(futime, status) ~ eye.type.full, data=diabetic)
+```
+
+
+# Models
+
+## Simple Cox Model
+
+```{r}
+diabetic$trt.full = relevel(diabetic$trt.full, ref = "Control")
+cox.model <- coxph(Surv(futime, status) ~ trt.full + eye.full + age + type + risk, data=diabetic)
+summary(cox.model)
+```
+
+## Cox Model with Frailty Term
+
+Interpretation: 
+
+* The estimated hazard for an eye with the Argon laser treatment is 0.3656 times less than an eye in the control. In other words,, with all features held fixed, argon eyes have 0.3656 time less chance of losing eyesight than control, at any point in time.
+
+```{r}
+frail.model <- coxph(Surv(futime, status) ~ trt.full + eye.full + age + risk + frailty(id), data=diabetic)
+summary(frail.model)
+```
+
+```{r}
+estimates <- cbind(Estimate = coef(frail.model), confint(frail.model))
+round(exp(estimates), 2)
+```
+
+
+## Frailty Model using different R Library
+
+```{r}
+coxme(Surv(futime, status) ~ trt.full + eye.full + age + risk + (1 | id), data=diabetic)
+```
+
+
+
+
+

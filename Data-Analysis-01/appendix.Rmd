@@ -1,0 +1,328 @@
+---
+title: "Assignment #1 Appendix"
+author: ""
+date: ""
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+# Load libraries
+library(faraway)
+library(leaps)
+library(MASS)
+library(pscl)
+library(boot)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+# Load Data
+credit <- read.csv("derogatory.csv", stringsAsFactors = TRUE)
+
+# List of categorical and numerical variables:
+cat_vars <- c("card", "owner", "selfemp", "majorcards")
+num_vars <- c("age", "reports", "income", "share", "expenditure", "dependents", "months", "active")
+```
+
+
+# 1. Exploratory Data Analysis
+
+### Variables
+
+Variable Name | Description
+------------- | -------------
+`card`        | Was the application for a credit card accepted?
+`reports`     | Number of derogatory reports
+`age`         | Applicant age in years at time of application
+`income`      | Yearly income in 10,000 USD
+`share`       | Ratio of monthly credit card expenditure to yearly income (generated from `income` and `expenditure`)
+`expenditure` | Average monthly credit card expenditure
+`owner`       | Does the applicant own their home?
+`selfemp`     | Is the individual self-employed?
+`dependents`  | Number of dependents
+`months`      | Number of months living at current address
+`majorcards`  | Does the applicant have other major credit cards?
+`active`      | Number of active credit accounts
+
+## Summary of EDA
+
+* There are 7 observations with age of less than 18 years old. This is noticeable because people can only apply to credit card starting at the age of 18.
+
+* The variable `reports` (the number of derogatory reports) contains many zeros. Need to keep this in mind when choosing a model.
+
+* Correlations: 
+  * Not many variables correlated with `reports`. `expenditure` is negatively correlated (the more you spend using credit cards, the less deragatory reports you have) and `active` is positively correlated (the more active cards you have, the more derogatory reports)
+  
+* Almost all distributions for the numeric variables have a skewed distribution.
+
+### Structure of dataset
+
+```{r, echo=FALSE}
+str(credit)
+```
+
+### Summary of entire dataset
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+summary(credit)
+```
+
+
+### SD for Numeric Variables
+
+```{r out.height = "50%", out.width="50%", echo=FALSE}
+lapply(credit[num_vars], IQR)
+```
+
+
+### Number of applications with no deragotory reports
+
+```{r}
+# Identifies how many observations have zero derogatory reports
+no_reports = (credit$reports == 0)
+
+# Reports the proportion of observations with zero derogatory reports
+sum(no_reports) / nrow(credit)
+```
+
+
+## Histograms for all numeric variables
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+for(v in num_vars){
+  hist(credit[, v], main = paste0("Histogram of ", v), xlab = v)
+}
+```
+
+## Scatterplots of response vs. numeric variables
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+num_vars2 <- num_vars[!num_vars %in% "reports"]
+for(v in num_vars2){
+  plot(credit[, v], credit$reports, main = paste0("reports vs. ", v), xlab = v)
+}
+```
+
+
+### Observations with age of less than 18
+
+```{r, echo=FALSE}
+# Report the number of observations that have an age less than 18
+credit[credit$age < 18, 1:6]
+```
+
+### Correlation Matrix across all Numeric Variables
+
+```{r, echo=FALSE}
+cor(credit[num_vars])
+```
+
+## Bar Plots for All categorical varibles
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+for(v in cat_vars){
+  barplot(table(credit[, v]), main = paste0("Histogram of ", v), xlab = v)
+}
+```
+
+# 2. Modeling and Diagnostics
+
+### Data Decisions
+
+* We will be dropping the 7 observations that have an age of less than 18 years old
+
+```{r}
+credit <- credit[!credit$age < 18, ]
+```
+
+## Models
+
+### Modeling Decisions
+
+* 7 observations with age less than 18 years old will be dropped.
+* The variable `card` will not be included since this variable was created as a function of the other variables, and this will cause multicollinearity issues.
+* The variable `ratio` will not be included in the model since this variable is created using `income` and `expenditure`, and since this information will already be available, we don't want redundancy in the variables of our model AND we don't want issues related to multicollinearity.
+* We aim to choose the model that:
+  * Handles excess amount of zeros in the `report` variable
+  * Provides good interpertability of results
+  * Is a good fit to the data
+  
+### Discussion of each model
+
+* Poisson Model: 
+  * Excess zeros in `report` will lead to problems
+  * Overdispersion present
+* Negative Binomial because:
+  * Helps deal with overdispersion present in Poisson model
+  * Helps deal with excess zeros
+* Zero-Inflated Negative Binomial because:
+  * Can help deal with excess zeros
+  * Interpretation not clear
+  
+## Poisson Regression Model
+
+```{r}
+# Poisson model
+poi.model = glm(reports ~ owner + selfemp + majorcards + age + income + expenditure + dependents + months + active, family=poisson, data=credit)
+summary(poi.model)
+```
+
+```{r}
+# Overdispersion check
+sigma2 = sum(residuals(poi.model, type="pearson")^2) / poi.model$df.residual
+sigma2
+```
+
+### Negative Binomial Model 
+
+```{r}
+# Negative Binomial
+nb.model <- glm.nb(reports ~ owner + selfemp + majorcards + age + 
+                     income + expenditure + dependents + months + active, data=credit)
+summary(nb.model)
+```
+
+#### Variable Selection
+
+#### Adjusted R-Square Approach
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+ar_model = regsubsets(reports ~ owner + selfemp + majorcards + age + income + expenditure + dependents + months + active, data=credit)
+ar_summ = summary(ar_model)
+ar_summ
+```
+
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+c("selfemp", "majorcard")
+plot(2:9, ar_summ$adjr2, xlab = "No. of parameters", ylab = "Adjusted R Squared")
+sprintf("The model with %i predictors is the one that maximizes the adjusted R2", which.max(ar_summ$adjr2))
+```
+Thus, our final model using Adjusted $R^2$ method would be:
+
+```{r, echo=FALSE}
+adj.nb.model = glm.nb(reports ~ owner + age + 
+                        income + expenditure + dependents + months + active, data=credit)
+summary(adj.nb.model)
+```
+
+#### Mallows' Cp Approach
+
+```{r, out.height = "50%", out.width="50%", echo=FALSE}
+plot(2:9, ar_summ$cp, xlab = "No. of parameter", ylab = "Mallows' C_p")
+abline(0, 1)
+sprintf("The model with %i predictors is the one that minimizes the Mallows' C_p", which.min(ar_summ$cp))
+```
+
+Thus our final model using Mallows' Cp will contain `owner`, `age`, `income`, `expenditure`, `months`, and `active`
+
+```{r, echo=FALSE}
+cp_model = glm.nb(reports ~ owner + age + income 
+                  + expenditure + months + active, data=credit)
+summary(cp_model)
+```
+
+### NB Model Diagnostics
+
+The Negative binomial models assume the conditional means are not equal to the conditional variances. This inequality is captured by estimating a dispersion parameter (not shown in the output) that is held constant in a Poisson model. From the values below, we conclude that the negative binomial model is more appropriate than the Poisson model.
+
+```{r}
+chi_val <- 2 * (logLik(nb.model) - logLik(poi.model))
+chi_val
+pchisq(chi_val, df = 1, lower.tail = FALSE)
+```
+
+### NB Model Coefficents and CI's
+
+```{r}
+estimates <- cbind(Estimate = coef(nb.model), confint(nb.model))
+round(exp(estimates), 2)
+```
+
+### Zero-Inflated Negative Binomial Regression
+
+```{r}
+# A simple inflation model where all zero counts have the same probability of belonging to the zero component can by specified by the formula y ~ x1 + x2 | 1.
+nb.infl.model <- zeroinfl(reports ~ owner + selfemp + majorcards + age 
+                          + income + expenditure + dependents + months + active | 1, data = credit, dist = "negbin")
+summary(nb.infl.model)
+```
+
+## Vuong Test Among Three Models
+
+
+```{r}
+# Poisson vs. Negative Binomial
+vuong(poi.model, nb.model)
+
+# Poisson vs. Zero-Inflated NB
+vuong(poi.model, nb.infl.model)
+
+# NB vs. Zero-Inflated NB
+vuong(nb.model, nb.infl.model)
+```
+
+
+
+
+X is Normal(mean = 50, sd = 12), where X is shoe sizes (cm)
+
+What is the probability that a randomly selected shoe size is 43 cm or less than that? 
+
+# Normal Dist. (no standarization)
+
+```{r}
+pnorm(q = 43, mean = 50, sd = 12)
+```
+
+```{r}
+qnorm(p = 0.2798345, mean = 50, sd = 12)
+```
+
+
+standardize the value of 43
+
+Z-score = (43 - 50) / 12
+
+```{r}
+(43 - 50) / 12
+```
+
+# Standard Normal Dist.
+
+```{r}
+pnorm(q = -0.5833333, mean = 0, sd = 1)
+```
+
+
+```{r}
+qnorm(p = 0.2798345, mean = 0, sd = 1)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
